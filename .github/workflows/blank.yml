@@ -135,6 +135,7 @@ jobs:
           import android.view.View;
           import android.view.ViewGroup;
           import android.view.WindowManager;
+          import android.webkit.CookieManager;
           import android.webkit.JavascriptInterface;
           import android.webkit.WebChromeClient;
           import android.webkit.WebResourceRequest;
@@ -238,6 +239,16 @@ jobs:
                   FrameLayout.LayoutParams lpNext = new FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP | Gravity.END);
                   lpNext.setMargins(0, dp(12), dp(12), 0);
                   playerLayer.addView(next, lpNext);
+
+                  // Заранее отвечаем на вопрос YouTube про cookie, чтобы страница согласия не появлялась
+                  CookieManager cm = CookieManager.getInstance();
+                  cm.setAcceptCookie(true);
+                  for (String c : new String[]{
+                          "SOCS=CAI; Domain=.youtube.com; Path=/; Max-Age=63072000; Secure",
+                          "CONSENT=YES+cb; Domain=.youtube.com; Path=/; Max-Age=63072000; Secure"}) {
+                      cm.setCookie("https://www.youtube.com", c);
+                  }
+                  cm.flush();
 
                   playerJs = readAsset("player.js");
                   web.loadDataWithBaseURL(BASE_URL, readAsset("index.html"), "text/html", "utf-8", null);
@@ -877,6 +888,23 @@ jobs:
           // Вставляется в мобильную страницу YouTube: растягивает плеер на весь экран,
           // прячет поиск, рекомендации и комментарии, сообщает приложению об окончании видео.
           (function () {
+            // Страница согласия на cookie: ничего не прячем, сами нажимаем «Отклонить все»
+            if (location.hostname.indexOf('consent.') === 0) {
+              if (window.__ktConsent) return;
+              window.__ktConsent = true;
+              var tries = 0;
+              var t = setInterval(function () {
+                tries++;
+                var bs = Array.prototype.slice.call(document.querySelectorAll('button, input[type=submit]'));
+                var txt = function (b) { return (b.textContent || b.value || '').toLowerCase(); };
+                var btn = bs.filter(function (b) { return /отклонить|reject/.test(txt(b)); })[0] ||
+                          bs.filter(function (b) { return /принять|accept/.test(txt(b)); })[0];
+                if (btn) { clearInterval(t); btn.click(); }
+                if (tries > 20) clearInterval(t);
+              }, 500);
+              return;
+            }
+            if (location.pathname !== '/watch' && location.pathname.indexOf('/shorts/') !== 0) return;
             if (window.__kt) return;
             window.__kt = true;
 
@@ -950,3 +978,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "Детский YouTube, сборка ${{ github.run_number }}" \
             --notes "Скачайте KidsTube.apk и установите на телефон."
+
