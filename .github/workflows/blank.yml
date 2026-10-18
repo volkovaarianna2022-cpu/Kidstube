@@ -1,4 +1,4 @@
-: # Детский YouTube — сборка APK одним файлом.
+# Детский YouTube — сборка APK одним файлом.
 # Положите этот файл в репозиторий GitHub по пути .github/workflows/build.yml
 name: Build KidsTube APK
 on:
