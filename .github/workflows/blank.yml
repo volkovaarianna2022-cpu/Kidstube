@@ -43,8 +43,8 @@ jobs:
                   applicationId 'kg.kidstube'
                   minSdk 26
                   targetSdk 35
-                  versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
-                  versionName '1.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+                  versionCode = (System.getenv('GITHUB_RUN_NUMBER') ?: '1') as Integer
+                  versionName = '1.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
               }
 
               signingConfigs {
@@ -805,3 +805,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "Детский YouTube, сборка ${{ github.run_number }}" \
             --notes "Скачайте KidsTube.apk и установите на телефон."
+
