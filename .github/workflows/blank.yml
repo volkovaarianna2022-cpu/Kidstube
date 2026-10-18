@@ -1,3 +1,4 @@
+
 # Детский YouTube — сборка APK одним файлом.
 # Положите этот файл в репозиторий GitHub по пути .github/workflows/build.yml
 name: Build KidsTube APK
@@ -160,8 +161,8 @@ jobs:
 
               private static final String BASE_URL = "https://kidstube.app/";
 
-              private WebView web;          // интерфейс приложения (каналы, настройки)
-              private WebView playerWeb;    // страница YouTube с видео
+              private WebView web; // интерфейс приложения (каналы, настройки)
+              private WebView playerWeb; // страница YouTube с видео
               private FrameLayout root;
               private FrameLayout playerLayer;
               private View customView;
@@ -171,6 +172,7 @@ jobs:
               private final List<String> ids = new ArrayList<>();
               private int idx = 0;
               private int reverts = 0;
+              private TextView statusView;
               private String playerJs = "";
 
               @Override
@@ -250,6 +252,16 @@ jobs:
                   }
                   cm.flush();
 
+                  // Строка для сообщений об ошибках внизу плеера
+                  statusView = new TextView(this);
+                  statusView.setTextColor(Color.argb(220, 255, 255, 120));
+                  statusView.setBackgroundColor(Color.argb(170, 0, 0, 0));
+                  statusView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+                  statusView.setPadding(dp(8), dp(4), dp(8), dp(4));
+                  statusView.setVisibility(View.GONE);
+                  playerLayer.addView(statusView, new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
+
                   playerJs = readAsset("player.js");
                   web.loadDataWithBaseURL(BASE_URL, readAsset("index.html"), "text/html", "utf-8", null);
               }
@@ -275,6 +287,7 @@ jobs:
 
               private void loadCurrent() {
                   if (ids.isEmpty()) return;
+                  if (statusView != null) statusView.setVisibility(View.GONE);
                   playerWeb.loadUrl("https://m.youtube.com/watch?v=" + ids.get(idx));
               }
 
@@ -372,6 +385,14 @@ jobs:
                   public void onPageFinished(WebView view, String url) {
                       inject();
                   }
+
+                  @Override
+                  public void onReceivedError(WebView view, WebResourceRequest req, android.webkit.WebResourceError err) {
+                      if (req.isForMainFrame() && statusView != null) {
+                          statusView.setText("Не получилось загрузить видео. Проверьте интернет. (" + err.getDescription() + ")");
+                          statusView.setVisibility(View.VISIBLE);
+                      }
+                  }
               }
 
               // ---------- Системное ----------
@@ -414,568 +435,4 @@ jobs:
                   WebSettings s = w.getSettings();
                   s.setJavaScriptEnabled(true);
                   s.setDomStorageEnabled(true);
-                  s.setMediaPlaybackRequiresUserGesture(false);
-                  s.setSupportMultipleWindows(false);
-                  s.setJavaScriptCanOpenWindowsAutomatically(false);
-                  // Убираем метку встроенного браузера ("; wv"), чтобы YouTube видел обычный Chrome
-                  String ua = s.getUserAgentString().replace("; wv)", ")").replaceAll("Version/[\\d.]+ ", "");
-                  s.setUserAgentString(ua);
-              }
-
-              private TextView roundButton(String text) {
-                  TextView b = new TextView(this);
-                  b.setText(text);
-                  b.setTextColor(Color.WHITE);
-                  b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-                  b.setGravity(Gravity.CENTER);
-                  GradientDrawable bg = new GradientDrawable();
-                  bg.setShape(GradientDrawable.OVAL);
-                  bg.setColor(Color.argb(150, 0, 0, 0));
-                  b.setBackground(bg);
-                  b.setClickable(true);
-                  return b;
-              }
-
-              private FrameLayout.LayoutParams matchParent() {
-                  return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-              }
-
-              private int dp(int v) {
-                  return Math.round(v * getResources().getDisplayMetrics().density);
-              }
-
-              private String readAsset(String name) {
-                  try (InputStream in = getAssets().open(name)) {
-                      return new String(readAll(in), StandardCharsets.UTF_8);
-                  } catch (Exception e) {
-                      return "";
-                  }
-              }
-
-              private static byte[] readAll(InputStream in) throws Exception {
-                  ByteArrayOutputStream out = new ByteArrayOutputStream();
-                  byte[] buf = new byte[16384];
-                  int n;
-                  while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                  return out.toByteArray();
-              }
-
-              /** Мост для интерфейса: загрузка списков видео и запуск плеера. */
-              private class Bridge {
-                  @JavascriptInterface
-                  public void play(final String json, final int index) {
-                      ui.post(() -> startPlayback(json, index));
-                  }
-
-                  @JavascriptInterface
-                  public void fetch(final String id, final String url) {
-                      new Thread(() -> {
-                          boolean ok = false;
-                          String body;
-                          try {
-                              if (!isYoutube(Uri.parse(url).getHost())) throw new Exception("host not allowed");
-                              HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-                              c.setConnectTimeout(15000);
-                              c.setReadTimeout(20000);
-                              c.setRequestProperty("User-Agent",
-                                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36");
-                              c.setRequestProperty("Accept-Language", "ru,en;q=0.8");
-                              c.setRequestProperty("Cookie", "CONSENT=YES+1; SOCS=CAI");
-                              int code = c.getResponseCode();
-                              InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
-                              body = in == null ? "" : new String(readAll(in), StandardCharsets.UTF_8);
-                              ok = code < 400;
-                          } catch (Exception e) {
-                              body = String.valueOf(e.getMessage());
-                          }
-                          final String js = "window.__fetchDone(" + JSONObject.quote(id) + "," + ok + ","
-                                  + JSONObject.quote(body) + ")";
-                          ui.post(() -> web.evaluateJavascript(js, null));
-                      }).start();
-                  }
-              }
-
-              /** Мост для страницы YouTube: только сигнал «видео закончилось». */
-              private class PlayerBridge {
-                  @JavascriptInterface
-                  public void ended() {
-                      ui.post(MainActivity.this::next);
-                  }
-              }
-          }
-          KT_EOF
-          cat > app/src/main/assets/index.html <<'KT_EOF'
-          <!doctype html>
-          <html lang="ru">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-          <title>Детский YouTube</title>
-          <style>
-            :root {
-              --bg: #FFF6E8;
-              --card: #FFFFFF;
-              --ink: #2B1D14;
-              --muted: #8A7563;
-              --accent: #E8572A;
-              --accent-soft: #FFE1CF;
-              --line: #F0E2D0;
-              --radius: 20px;
-            }
-            * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-            html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
-              font-family: system-ui, -apple-system, "Roboto", sans-serif; user-select: none; }
-            button { font: inherit; border: 0; cursor: pointer; }
-            .view { display: none; min-height: 100%; padding: 16px 16px 40px; }
-            .view.on { display: block; }
-
-            header { display: flex; align-items: center; gap: 10px; margin: 4px 0 18px; }
-            header h1 { flex: 1; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;
-              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-            .icon-btn { width: 44px; height: 44px; border-radius: 14px; background: var(--card);
-              color: var(--ink); font-size: 22px; display: grid; place-items: center;
-              box-shadow: 0 1px 0 var(--line); flex: none; }
-            .gear { background: transparent; color: #CDBBA8; box-shadow: none; font-size: 20px; }
-
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
-            .card { background: var(--card); border-radius: var(--radius); overflow: hidden; text-align: left;
-              padding: 0; color: var(--ink); box-shadow: 0 2px 0 var(--line); transition: transform .12s; }
-            .card:active { transform: scale(0.96); }
-            .thumb { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: var(--accent-soft); }
-            .card .t { padding: 10px 12px 12px; font-size: 15px; font-weight: 600; line-height: 1.25;
-              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-            .card .kind { padding: 0 12px 12px; margin-top: -6px; font-size: 12px; color: var(--muted); }
-
-            .big-btn { display: block; width: 100%; padding: 16px; border-radius: 18px; background: var(--accent);
-              color: #fff; font-size: 18px; font-weight: 700; margin-bottom: 16px; }
-            .empty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 17px; line-height: 1.5; }
-            .empty b { display: block; font-size: 54px; margin-bottom: 10px; }
-            .status { text-align: center; color: var(--muted); padding: 30px 0; }
-
-            /* Плеер */
-            #player-view { position: fixed; inset: 0; padding: 0; background: #111; color: #fff;
-              display: none; flex-direction: column; z-index: 10; }
-            #player-view.on { display: flex; }
-            #player-view .bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
-            #player-view .bar .icon-btn { background: #2A2A2A; color: #fff; box-shadow: none; }
-            #player-view .bar .title { flex: 1; font-size: 15px; font-weight: 600; overflow: hidden;
-              text-overflow: ellipsis; white-space: nowrap; }
-            .player-box { width: 100%; aspect-ratio: 16/9; background: #000; flex: none; position: relative; }
-            .player-box iframe, #yt { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-            .msg { position: absolute; inset: 0; display: none; place-items: center; text-align: center;
-              padding: 20px; font-size: 16px; background: #000; color: #ddd; }
-            .msg.on { display: grid; }
-            .up-next { flex: 1; overflow-y: auto; padding: 12px 12px 30px; }
-            .up-next h3 { margin: 4px 4px 10px; font-size: 14px; color: #999; font-weight: 600; }
-            .row { display: flex; gap: 12px; align-items: center; width: 100%; padding: 6px; border-radius: 14px;
-              background: transparent; color: #eee; text-align: left; }
-            .row.cur { background: #2A2A2A; }
-            .row img { width: 128px; aspect-ratio: 16/9; object-fit: cover; border-radius: 10px; flex: none; background: #333; }
-            .row span { font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3;
-              -webkit-box-orient: vertical; overflow: hidden; }
-
-            /* Родительский раздел */
-            .panel { background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
-            .panel p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
-            input[type=text], input[type=number] { width: 100%; padding: 14px; font-size: 16px; border-radius: 14px;
-              border: 2px solid var(--line); background: var(--bg); color: var(--ink); outline: none; }
-            input:focus { border-color: var(--accent); }
-            .add-row { display: flex; gap: 8px; }
-            .add-row button { padding: 0 18px; border-radius: 14px; background: var(--accent); color: #fff; font-weight: 700; }
-            .src { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
-            .src:first-child { border-top: 0; }
-            .src img { width: 72px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: var(--accent-soft); }
-            .src .n { flex: 1; font-size: 15px; font-weight: 600; }
-            .src .n small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
-            .src button { background: var(--accent-soft); color: var(--accent); width: 36px; height: 36px; border-radius: 10px; font-size: 16px; }
-            .note { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 18px; }
-            .note.err { color: #C0392B; }
-
-            .gate { max-width: 360px; margin: 40px auto 0; text-align: center; }
-            .gate .q { font-size: 34px; font-weight: 800; margin: 18px 0; }
-            .gate input { text-align: center; font-size: 24px; }
-          </style>
-          </head>
-          <body>
-
-          <!-- Главная -->
-          <section id="home" class="view on">
-            <header>
-              <h1>Что посмотрим?</h1>
-              <button class="icon-btn gear" onclick="openGate()" aria-label="Для родителей">⚙</button>
-            </header>
-            <div id="home-grid" class="grid"></div>
-          </section>
-
-          <!-- Канал / плейлист -->
-          <section id="source" class="view">
-            <header>
-              <button class="icon-btn" onclick="go('home')" aria-label="Назад">←</button>
-              <h1 id="source-title"></h1>
-              <button class="icon-btn" onclick="loadSource(curSource, true)" aria-label="Обновить">⟳</button>
-            </header>
-            <button id="play-all" class="big-btn" onclick="playAll()">▶ Смотреть всё подряд</button>
-            <div id="source-grid" class="grid"></div>
-          </section>
-
-          <!-- Проверка взрослого -->
-          <section id="gate" class="view">
-            <header>
-              <button class="icon-btn" onclick="go('home')" aria-label="Назад">←</button>
-              <h1>Для взрослых</h1>
-            </header>
-            <div class="gate">
-              <div style="color:var(--muted)">Решите пример, чтобы продолжить</div>
-              <div class="q" id="gate-q"></div>
-              <input type="number" id="gate-a" inputmode="numeric" placeholder="Ответ">
-              <button class="big-btn" style="margin-top:14px" onclick="checkGate()">Дальше</button>
-              <div class="note err" id="gate-err"></div>
-            </div>
-          </section>
-
-          <!-- Настройки -->
-          <section id="settings" class="view">
-            <header>
-              <button class="icon-btn" onclick="go('home')" aria-label="Назад">←</button>
-              <h1>Что можно смотреть</h1>
-            </header>
-            <div class="panel">
-              <p>Вставьте ссылку на канал, плейлист или отдельное видео из YouTube. Ребёнок увидит только то, что есть в этом списке.</p>
-              <div class="add-row">
-                <input type="text" id="add-url" placeholder="https://youtube.com/@канал">
-                <button onclick="addSource()">+</button>
-              </div>
-              <div class="note" id="add-note"></div>
-            </div>
-            <div class="panel" id="src-list"></div>
-            <div class="panel">
-              <p>Совет: у каналов в списке видны последние 15 видео. Чтобы дать доступ к старым выпускам, сделайте у себя на YouTube плейлист и добавьте его сюда.</p>
-            </div>
-          </section>
-
-          <script>
-          /* ---------- Хранилище ---------- */
-          const store = {
-            get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
-            set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-          };
-          let sources = store.get('kt_sources', []);
-          const saveSources = () => store.set('kt_sources', sources);
-
-          /* ---------- Загрузка через Android-мост (без CORS) ---------- */
-          let fetchSeq = 0;
-          const pending = {};
-          window.__fetchDone = (id, ok, body) => {
-            const p = pending[id]; if (!p) return;
-            delete pending[id];
-            ok ? p.res(body) : p.rej(new Error(body || 'Ошибка сети'));
-          };
-          function ytFetch(url) {
-            if (!window.Android) return fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); });
-            return new Promise((res, rej) => {
-              const id = 'f' + (++fetchSeq);
-              pending[id] = { res, rej };
-              Android.fetch(id, url);
-            });
-          }
-
-          /* ---------- Утилиты ---------- */
-          const $ = id => document.getElementById(id);
-          const esc = s => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-          const thumbOf = vid => 'https://i.ytimg.com/vi/' + vid + '/hqdefault.jpg';
-          const kindName = { channel: 'Канал', playlist: 'Плейлист', video: 'Видео' };
-
-          let curView = 'home';
-          function go(name) {
-            document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === name));
-            curView = name;
-            window.scrollTo(0, 0);
-            if (name === 'home') renderHome();
-            if (name === 'settings') renderSettings();
-          }
-
-          /* Кнопка «Назад» Android: true — обработали сами, false — свернуть приложение */
-          window.handleBack = function () {
-            if (curView !== 'home') { go('home'); return true; }
-            return false;
-          };
-
-          /* ---------- Главная ---------- */
-          function renderHome() {
-            const g = $('home-grid');
-            if (!sources.length) {
-              g.outerHTML = '<div id="home-grid" class="empty"><b>📺</b>Здесь пока пусто.<br>Попроси взрослого добавить мультики.</div>';
-              return;
-            }
-            if (g.className !== 'grid') { g.className = 'grid'; }
-            g.innerHTML = sources.map((s, i) =>
-              `<button class="card" onclick="openSource(${i})">
-                 <img class="thumb" src="${esc(s.thumb)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
-                 <div class="t">${esc(s.title)}</div>
-               </button>`).join('');
-          }
-
-          /* ---------- Канал / плейлист ---------- */
-          let curSource = null;
-          let curVideos = [];
-
-          function feedUrl(s) {
-            return s.type === 'channel'
-              ? 'https://www.youtube.com/feeds/videos.xml?channel_id=' + s.ytId
-              : 'https://www.youtube.com/feeds/videos.xml?playlist_id=' + s.ytId;
-          }
-
-          function parseFeed(xml) {
-            const doc = new DOMParser().parseFromString(xml, 'application/xml');
-            if (doc.getElementsByTagName('parsererror').length) throw new Error('Не удалось прочитать список видео');
-            const feedTitle = (doc.querySelector('feed > title') || {}).textContent || '';
-            const author = (doc.querySelector('feed > author > name') || {}).textContent || '';
-            const videos = Array.from(doc.getElementsByTagName('entry')).map(e => {
-              const id = (e.getElementsByTagName('yt:videoId')[0] || {}).textContent;
-              const title = (e.getElementsByTagName('title')[0] || {}).textContent;
-              return id ? { id, title, thumb: thumbOf(id) } : null;
-            }).filter(Boolean);
-            return { title: feedTitle || author, videos };
-          }
-
-          function openSource(i) {
-            const s = sources[i];
-            if (s.type === 'video') {
-              curSource = s;
-              curVideos = [{ id: s.ytId, title: s.title, thumb: s.thumb }];
-              playVideo(0);
-              return;
-            }
-            curSource = s;
-            $('source-title').textContent = s.title;
-            go('source');
-            loadSource(s, false);
-          }
-
-          async function loadSource(s, force) {
-            const g = $('source-grid');
-            const cache = store.get('kt_cache_' + s.ytId, null);
-            if (cache) { curVideos = cache.videos; renderSource(); }
-            else g.innerHTML = '<div class="status" style="grid-column:1/-1">Загружаю…</div>';
-            if (cache && !force && Date.now() - cache.ts < 3600e3) return;
-            try {
-              const { videos } = parseFeed(await ytFetch(feedUrl(s)));
-              store.set('kt_cache_' + s.ytId, { ts: Date.now(), videos });
-              if (curSource === s) { curVideos = videos; renderSource(); }
-            } catch (e) {
-              if (!cache) g.innerHTML = '<div class="status" style="grid-column:1/-1">Не получилось загрузить. Проверь интернет и нажми ⟳</div>';
-            }
-          }
-
-          function renderSource() {
-            const g = $('source-grid');
-            if (!curVideos.length) { g.innerHTML = '<div class="status" style="grid-column:1/-1">Тут пока нет видео</div>'; return; }
-            g.innerHTML = curVideos.map((v, i) =>
-              `<button class="card" onclick="playVideo(${i})">
-                 <img class="thumb" src="${esc(v.thumb)}" alt="" loading="lazy">
-                 <div class="t">${esc(v.title)}</div>
-               </button>`).join('');
-          }
-
-          /* ---------- Плеер (нативный, страница YouTube внутри приложения) ---------- */
-          function playVideo(i) {
-            if (!curVideos.length) return;
-            const list = curVideos.map(v => ({ id: v.id, title: v.title }));
-            if (window.Android && Android.play) Android.play(JSON.stringify(list), i);
-          }
-
-          function playAll() { playVideo(0); }
-
-          /* ---------- Проверка взрослого ---------- */
-          let gateAnswer = 0;
-          function openGate() {
-            const a = 6 + Math.floor(Math.random() * 7), b = 6 + Math.floor(Math.random() * 7);
-            gateAnswer = a * b;
-            $('gate-q').textContent = a + ' × ' + b + ' = ?';
-            $('gate-a').value = ''; $('gate-err').textContent = '';
-            go('gate');
-          }
-          function checkGate() {
-            if (parseInt($('gate-a').value, 10) === gateAnswer) go('settings');
-            else { $('gate-err').textContent = 'Неверно'; setTimeout(openGate, 900); }
-          }
-          $('gate-a').addEventListener('keydown', e => { if (e.key === 'Enter') checkGate(); });
-
-          /* ---------- Настройки ---------- */
-          function renderSettings() {
-            const l = $('src-list');
-            l.innerHTML = sources.length ? sources.map((s, i) =>
-              `<div class="src">
-                 <img src="${esc(s.thumb)}" alt="" onerror="this.style.visibility='hidden'">
-                 <div class="n">${esc(s.title)}<small>${kindName[s.type]}</small></div>
-                 <button onclick="removeSource(${i})" aria-label="Убрать">✕</button>
-               </div>`).join('') : '<p style="margin:0">Список пуст.</p>';
-          }
-
-          function removeSource(i) {
-            if (!confirm('Убрать «' + sources[i].title + '»?')) return;
-            try { localStorage.removeItem('kt_cache_' + sources[i].ytId); } catch (e) {}
-            sources.splice(i, 1); saveSources(); renderSettings();
-          }
-
-          function parseInput(raw) {
-            let s = raw.trim();
-            if (!s) return null;
-            if (/^@[\w.\-]+$/.test(s)) return { kind: 'handle', url: 'https://www.youtube.com/' + s };
-            if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
-            let u; try { u = new URL(s); } catch (e) { return null; }
-            if (!/(^|\.)youtube\.com$|(^|\.)youtu\.be$/.test(u.hostname)) return null;
-            const list = u.searchParams.get('list');
-            const v = u.searchParams.get('v');
-            if (u.hostname.endsWith('youtu.be')) return { kind: 'video', id: u.pathname.slice(1).split('/')[0] };
-            let m;
-            if ((m = u.pathname.match(/^\/(shorts|live|embed)\/([\w-]{11})/))) return { kind: 'video', id: m[2] };
-            if (list && !v) return { kind: 'playlist', id: list };
-            if (v) return { kind: 'video', id: v };
-            if ((m = u.pathname.match(/^\/channel\/(UC[\w-]{22})/))) return { kind: 'channel', id: m[1] };
-            return { kind: 'handle', url: 'https://www.youtube.com' + u.pathname.split('/').slice(0, 3).join('/') };
-          }
-
-          async function addSource() {
-            const note = $('add-note');
-            const p = parseInput($('add-url').value);
-            note.className = 'note';
-            if (!p) { note.className = 'note err'; note.textContent = 'Это не похоже на ссылку YouTube'; return; }
-            note.textContent = 'Проверяю…';
-            try {
-              let src;
-              if (p.kind === 'video') {
-                const j = JSON.parse(await ytFetch('https://www.youtube.com/oembed?format=json&url=' +
-                  encodeURIComponent('https://www.youtube.com/watch?v=' + p.id)));
-                src = { type: 'video', ytId: p.id, title: j.title, thumb: thumbOf(p.id) };
-              } else {
-                let type = p.kind, id = p.id;
-                if (p.kind === 'handle') {
-                  const html = await ytFetch(p.url);
-                  const m = html.match(/"externalId":"(UC[\w-]{22})"/) ||
-                            html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/) ||
-                            html.match(/"channelId":"(UC[\w-]{22})"/);
-                  if (!m) throw new Error('Не нашёл такой канал');
-                  type = 'channel'; id = m[1];
-                }
-                const draft = { type, ytId: id };
-                const feed = parseFeed(await ytFetch(feedUrl(draft)));
-                store.set('kt_cache_' + id, { ts: Date.now(), videos: feed.videos });
-                src = Object.assign(draft, {
-                  title: feed.title || kindName[type],
-                  thumb: feed.videos[0] ? feed.videos[0].thumb : ''
-                });
-              }
-              if (sources.some(x => x.ytId === src.ytId)) { note.textContent = 'Уже есть в списке'; return; }
-              sources.push(src); saveSources();
-              $('add-url').value = '';
-              note.textContent = 'Добавлено: ' + src.title;
-              renderSettings();
-            } catch (e) {
-              note.className = 'note err';
-              note.textContent = 'Не получилось добавить: ' + (e.message || e) +
-                '. Если это микс YouTube (ссылка с list=RD…), такие не поддерживаются.';
-            }
-          }
-          $('add-url').addEventListener('keydown', e => { if (e.key === 'Enter') addSource(); });
-
-          renderHome();
-          </script>
-          </body>
-          </html>
-          KT_EOF
-          cat > app/src/main/assets/player.js <<'KT_EOF'
-          // Вставляется в мобильную страницу YouTube: растягивает плеер на весь экран,
-          // прячет поиск, рекомендации и комментарии, сообщает приложению об окончании видео.
-          (function () {
-            // Страница согласия на cookie: ничего не прячем, сами нажимаем «Отклонить все»
-            if (location.hostname.indexOf('consent.') === 0) {
-              if (window.__ktConsent) return;
-              window.__ktConsent = true;
-              var tries = 0;
-              var t = setInterval(function () {
-                tries++;
-                var bs = Array.prototype.slice.call(document.querySelectorAll('button, input[type=submit]'));
-                var txt = function (b) { return (b.textContent || b.value || '').toLowerCase(); };
-                var btn = bs.filter(function (b) { return /отклонить|reject/.test(txt(b)); })[0] ||
-                          bs.filter(function (b) { return /принять|accept/.test(txt(b)); })[0];
-                if (btn) { clearInterval(t); btn.click(); }
-                if (tries > 20) clearInterval(t);
-              }, 500);
-              return;
-            }
-            if (location.pathname !== '/watch' && location.pathname.indexOf('/shorts/') !== 0) return;
-            if (window.__kt) return;
-            window.__kt = true;
-
-            var css =
-              'html,body{overflow:hidden!important;background:#000!important}' +
-              '.kt-full{position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;' +
-              'width:100vw!important;height:100vh!important;max-height:none!important;z-index:2147483646!important;' +
-              'background:#000!important;margin:0!important;padding:0!important;transform:none!important}' +
-              '.kt-full .html5-video-player,.kt-full .html5-video-container,.kt-full #player,.kt-full .player-container,' +
-              '.kt-full #movie_player{width:100%!important;height:100%!important;max-height:none!important;padding:0!important}' +
-              '.kt-full video{width:100%!important;height:100%!important;left:0!important;top:0!important;object-fit:contain!important}' +
-              'ytm-mobile-topbar-renderer,#header-bar,ytm-pivot-bar-renderer,.ytp-ce-element,.ytp-endscreen-content,' +
-              '.ytm-autonav-bar,.ytp-autonav-endscreen,.ytp-autonav-endscreen-countdown-overlay,.ytp-suggestion-set,' +
-              'ytm-companion-slot,.mobile-topbar-header,ytm-app-promo-renderer,.player-controls-top a,' +
-              '.ytmVideoInfoVideoTitle a{display:none!important}';
-
-            function addCss() {
-              if (document.getElementById('kt-css')) return;
-              var s = document.createElement('style');
-              s.id = 'kt-css';
-              s.textContent = css;
-              (document.head || document.documentElement).appendChild(s);
-            }
-
-            function isAd() {
-              return !!document.querySelector('.ad-showing, .ad-interrupting');
-            }
-
-            function tick() {
-              addCss();
-              var v = document.querySelector('video');
-              if (v && !v.__kt) {
-                v.__kt = true;
-                v.addEventListener('ended', function () {
-                  setTimeout(function () {
-                    if (v.ended && !isAd() && window.KT) KT.ended();
-                  }, 700);
-                });
-              }
-              if (v && v.paused && !v.ended && !window.__ktStarted && v.readyState >= 2) {
-                window.__ktStarted = true;
-                var pr = v.play();
-                if (pr && pr.catch) pr.catch(function () {});
-              }
-              var p = document.querySelector('#player-container-id') ||
-                      (v && v.closest && (v.closest('#player') || v.closest('.html5-video-player')));
-              if (p && !p.classList.contains('kt-full')) p.classList.add('kt-full');
-            }
-
-            tick();
-            setInterval(tick, 400);
-          })();
-          KT_EOF
-          echo 'MIIKCAIBAzCCCbIGCSqGSIb3DQEHAaCCCaMEggmfMIIJmzCCBbIGCSqGSIb3DQEHAaCCBaMEggWfMIIFmzCCBZcGCyqGSIb3DQEMCgECoIIFQDCCBTwwZgYJKoZIhvcNAQUNMFkwOAYJKoZIhvcNAQUMMCsEFIo55M+thh0Ar/ygIf02s75URHwVAgInEAIBIDAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQyFpAJhtmY1Oav5aM6Hp1vgSCBNA9uNgB0r5B2d4PZwwFJ4u6c3FJQ9SVGa1rcDIv+LvjLFUtpcTFsF0GcW+KrWYs3Qhsnxny3X68VA1goGSFMawYMO9jfgEzQX4j2t4HWrxWzkShAGgMy68uaxyHZQUe1O+p/0E6zi3OQywpJzIKaf78UGU+tgJScogqZfr+rKN/MiQNONsr7Cl3mrAKspci35E8ELjynW7v23SpzevQYn98GaLC/3LAwV8kunV9Nzt9LIf1APXUP23dIRa3SEIPxMrjX1uoLCrZsXliH38epkpJibxKnrV7Drm7Uu89ZB9ohnQk8T0MLYZWkInXtt+96LnE53l1nEOUe93vgbpqrWjjOgpcU8AB09YKsgcXqiXX711HuRUqsWsdZjxjwfKp0NNYk1iGwXlEGAHjg5jrcbyHxfSiySr2E2X9dEdBPkw9fJ4eomeAuMbZttDjcIFg6I3icqeJlnvAjiCotOA8AWBjcz7VNU8UdrFb7cIXrTDImWIksJllJyyV2oL3RWaFlmqqvo3BvlNC41642eV0moGwsXG+FWEsa2ivYOE41Pi4mYDdXJDDoXOQpl2NXUj2aQimMRrXd3CJeAFmqK3f8hSU/zJ1JLLlaRGpssqbG49cNdaFG/3diUN4ifwD5XYl7p7lDHCwFnmtQsXv1A8eOdNVht0Nf4JjkG43dOLrapEnm+RDdrFP4ItVStzFRjxqDd3+Gi7T/2VAZ8UNzfc58JGhNEtyomDawHLfOmLNppgTXdfdEqDef8QYmWx8zJsWfi7Drmgrc1lXRS7EG4kG2KBqJo01ky81EWt8IHZjMcJulTN7PvyRZSdKfst2V1JgoUEaffD0VRLIEMs1gWIhqVrUdmLrlJdLPqUPRBrUKYP9jEZYalan9Pdv+U0jmiZYz3Nh/MqveCKBwbPpuo2cIKsUnogTWFg/xMt1ae7Eev/f0oqnCGpH6cadPI9lsdfGCCi9KoijZF2LjzShO6eXArMzx3J8+eskFLCyBpMbwEtwMCk9zjG05nsZG0VDolacpLlDjJqqJ+SO/lKID5phDYmk6gv77KbTzdN8zlpmykIcglx9Yh1nya3E5ugZnuHllIjoVEyJ9cmf79vlviyQUB7Zo5q7pgTCwEuKf1yxq/u1TghR2ndLoR/sHvUmxoZ/SjhLms0o80hFbmP2VhwXFbbb1nCb4rnMp0QBcE7QPqbjn3pJA7JlE6gFOzZen5UT7zqEpq4FR+VEBT/tzIQC5fmI5jdIv4Gt3FDT/YXLl2x5KA3Sh4nCA/JBKaHRUGO6gZ0BtSdrBZVewB8N/J4g08cOE4Y+xydbJyLY2W6wbiUKIRp0zsFz5obghUCrSFosaX58BiA2Y3cJ3YR/40p9imESCYI+eeZ8zaZPZiHyFaktToDth3sI1OFdHdjr9/SuNmVJhDEGs/qunAacbKSMYeg8KJMs3ff1CoPfXj2dUCs18JUYSj37L5ElNA4SzW7Ieas5UwRt8XY9+lJWNCACRvPDZRAyMe+sE1UvJQJ2bt3t8y2XwyFFzGaBeQ5c7icJbXHjHdTKH+lwJz9JLmlW8FPGcofumgN9+9q1d1h1tG9oVH5i9HfYR51jIpKhn5etOr3klSG6ZLSRiKWiDzU3iskA1HSMt5pVidIBDww4WPybNTFEMB8GCSqGSIb3DQEJFDESHhAAawBpAGQAcwB0AHUAYgBlMCEGCSqGSIb3DQEJFTEUBBJUaW1lIDE3OTIzMjgzODkzMDgwggPhBgkqhkiG9w0BBwagggPSMIIDzgIBADCCA8cGCSqGSIb3DQEHATBmBgkqhkiG9w0BBQ0wWTA4BgkqhkiG9w0BBQwwKwQURxowhuTN0R3vW/qf6uAlScs4kjwCAicQAgEgMAwGCCqGSIb3DQIJBQAwHQYJYIZIAWUDBAEqBBB0w/VaeCcfIoffPQKT91ILgIIDUJ658mw9vElLwenmLXgU2nbCCWhIUIYXJ8kV3ELcfjk+5S7DAc10oh8PjXE8eUs2S+WZ0tF9jn5mph6cHBCDWxTELxDe5nqk/ViDdMenlBKCH0tnth4gSaJZZONm17u02vkuMBWD+EBPLagDjlvsxKFrfVWxnf1Oj9k6sD1n2pVOZ/fSavTBsgBd3UEZmWN0ZlJebhzZRu5xOd1dAndVrx4Yy5tALoO+kHxrrmc7NxNZlYTZSypvpoeAJZ8trGp8r9HAYL62hNZi4WkigdOXTwJ5Zmyqd1eSIfgiBw2EemZpiB89IhhhyihMFNRrtpnONLnIxuwIMD4WpEAqrrGSuNBFDb0CpO7igZTrW8ZrDLypnpIX4iyeOYOZKUJboCT8iqJhXhffA05N7qHBqUoXjQWHtVwf5zb4JxgkGkedktATBhGvh2D1WC5PncI0d9ezkx6kFU+8Q22cFZ3HXTpeOY1lVhlG34L3Do3V35Ctfb5BmuJB6VURw8H4lIaziEqj6io/2Dt7sYYl8117Ay2xNoQ0KXmF80Z4lrVXpJdpobgF7nBrpSN0O/ROmVl7ZYLlLjCpyRSdSdPJs7XqOdel39uW7LlE8l86gkUguHmIAJ3UQiR98WW23IqXTdEKg0JSL/P2jaZvIFa0csDgD4NbHZ7n5UJEstFCsHWQcsSqPJj+CZU/wnOJZ58rer667IusnhYTqonbvlXeZYM8T005fKl34GVVO/WmGZgZ0K/dUyoEG8B6wvRJAQHsPuJrjGNh3r0UktUeJbp4FnrTmMRquhZ17h2cpEBSfFf4jjUYuxN/pdiWEVN9yQtXmwJQAVKfOONZ5eaD66aYWswgND1ToEMwdi7C7UWNOeyR9L8yr2g4Aj0HB10lnhzuJBS2p8nX3qqDy8Dfy1lA5J1tEPTYg3+qc60JvW1PowXP2bWYj/skd9Lz9cVh3GVWG/KhU69QWSLUW+XxIzJlRCcWQs3+MH1GDD8wb3PNGbxqTDv1+iUwYvO02zlMKxSXDCQD+9DAjiBj8wD+EWmQ3754VwT8lvsu/M4XffCwBwWkLvCFNADLsblDncuY2bZ/Qru/jG45/T0dKsB5QESkInBBdwFjbVL5H+XUv/KVmbU5OlTy3CgFME0wMTANBglghkgBZQMEAgEFAAQgyHbcRB4rWg6IotlDzJW6MOSQ4OnFDJWTB/NkYZwJawgEFPtkvYsFI6FvGDRxP0pVAMiwGhpEAgInEA==' | base64 -d > app/kidstube.jks
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.14.3'
-      - name: Build APK
-        run: |
-          gradle assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/*.apk KidsTube.apk
-      - name: Publish download link
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "v${{ github.run_number }}" KidsTube.apk \
-            --repo "${{ github.repository }}" \
-            --title "Детский YouTube, сборка ${{ github.run_number }}" \
-            --notes "Скачайте KidsTube.apk и установите на телефон."
-
+         
