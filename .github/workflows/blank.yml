@@ -43,8 +43,8 @@ jobs:
                   applicationId 'kg.kidstube'
                   minSdk 26
                   targetSdk 35
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+                  versionName '1.' + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
               }
 
               signingConfigs {
@@ -178,6 +178,9 @@ jobs:
                   s.setMediaPlaybackRequiresUserGesture(false);
                   s.setSupportMultipleWindows(false);
                   s.setJavaScriptCanOpenWindowsAutomatically(false);
+                  // Убираем метку встроенного браузера ("; wv"), иначе YouTube иногда не пускает плеер.
+                  String ua = s.getUserAgentString().replace("; wv)", ")").replaceAll("Version/[\\d.]+ ", "");
+                  s.setUserAgentString(ua);
 
                   web.addJavascriptInterface(new Bridge(), "Android");
 
@@ -583,6 +586,8 @@ jobs:
 
           /* ---------- Плеер (YouTube IFrame API) ---------- */
           let yt = null, ytReady = null, curIndex = 0, playlistMode = false;
+          const HOSTS = ['https://www.youtube.com', 'https://www.youtube-nocookie.com'];
+          let hostIdx = 0, lastOpts = null, retried = false;
 
           function loadYtApi() {
             if (ytReady) return ytReady;
@@ -599,7 +604,9 @@ jobs:
 
           function showMsg(text) { const m = $('player-msg'); m.textContent = text || ''; m.classList.toggle('on', !!text); }
 
-          async function createPlayer(opts) {
+          async function createPlayer(opts, isRetry) {
+            lastOpts = opts;
+            if (!isRetry) { retried = false; }
             showMsg('');
             $('player-title').textContent = opts.title || '';
             document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'player-view'));
@@ -608,7 +615,7 @@ jobs:
             if (yt) { try { yt.destroy(); } catch (e) {} yt = null; }
             if (!$('yt')) { const d = document.createElement('div'); d.id = 'yt'; document.querySelector('.player-box').prepend(d); }
             yt = new YT.Player('yt', {
-              host: 'https://www.youtube-nocookie.com',
+              host: HOSTS[hostIdx],
               videoId: opts.videoId,
               playerVars: Object.assign({}, baseVars, opts.vars || {}),
               events: { onStateChange: onState, onError: onErr }
@@ -652,8 +659,15 @@ jobs:
 
           function onErr(e) {
             const c = e.data;
-            if (c === 101 || c === 150 || c === 152) {
-              showMsg('Автор этого видео запретил смотреть его в других приложениях.' +
+            // Первая ошибка — пробуем другой адрес плеера (youtube.com ↔ youtube-nocookie.com)
+            if (!retried && lastOpts) {
+              retried = true;
+              hostIdx = 1 - hostIdx;
+              createPlayer(lastOpts, true);
+              return;
+            }
+            if (c === 101 || c === 150) {
+              showMsg('Автор этого видео запретил смотреть его в других приложениях (код ' + c + ').' +
                 (!playlistMode && curIndex + 1 < curVideos.length ? ' Включаю следующее…' : ''));
               if (!playlistMode && curIndex + 1 < curVideos.length) setTimeout(() => playVideo(curIndex + 1), 2500);
             } else if (c === 100) {
